@@ -188,8 +188,9 @@ def select_rows(dates, entries, target):
     return rows, warning
 
 
-def make_messages(target, rows, warning=""):
-    lines = ["<b>Зміни до розкладу занять</b>", f"Дата: {target.strftime('%d.%m.%Y')} (завтра)", ""]
+def make_messages(target, rows, warning="", is_update=False):
+    title = "Нові зміни до розкладу занять" if is_update else "Зміни до розкладу занять"
+    lines = [f"<b>{title}</b>", f"Дата: {target.strftime('%d.%m.%Y')} (завтра)", ""]
     if rows:
         current_section = None
         for section, group, lesson, subject in rows:
@@ -219,16 +220,48 @@ def make_messages(target, rows, warning=""):
     return chunks
 
 
+def _connect():
+    con = sqlite3.connect(DB_PATH)
+    con.execute("CREATE TABLE IF NOT EXISTS sent (day TEXT PRIMARY KEY, sent_at TEXT NOT NULL)")
+    # Every change row already posted, per target date (used to detect NEW changes later in the day).
+    con.execute(
+        "CREATE TABLE IF NOT EXISTS sent_rows (target TEXT NOT NULL, row_key TEXT NOT NULL, "
+        "PRIMARY KEY (target, row_key))"
+    )
+    return con
+
+
 def already_sent(day):
-    with sqlite3.connect(DB_PATH) as con:
-        con.execute("CREATE TABLE IF NOT EXISTS sent (day TEXT PRIMARY KEY, sent_at TEXT NOT NULL)")
+    with _connect() as con:
         return con.execute("SELECT 1 FROM sent WHERE day=?", (day,)).fetchone() is not None
 
 
 def mark_sent(day):
-    with sqlite3.connect(DB_PATH) as con:
-        con.execute("CREATE TABLE IF NOT EXISTS sent (day TEXT PRIMARY KEY, sent_at TEXT NOT NULL)")
+    with _connect() as con:
         con.execute("INSERT OR IGNORE INTO sent(day, sent_at) VALUES (?, ?)", (day, datetime.now(TZ).isoformat()))
+
+
+def row_key(row):
+    return "|".join(row)
+
+
+def known_rows(target):
+    with _connect() as con:
+        return {r[0] for r in con.execute("SELECT row_key FROM sent_rows WHERE target=?", (target,))}
+
+
+def remember_rows(target, rows):
+    with _connect() as con:
+        con.executemany(
+            "INSERT OR IGNORE INTO sent_rows(target, row_key) VALUES (?, ?)",
+            [(target, row_key(r)) for r in rows],
+        )
+
+
+async def send_messages(messages):
+    async with Bot(BOT_TOKEN) as bot:
+        for message in messages:
+            await bot.send_message(chat_id=CHAT_ID, text=message, parse_mode="HTML", disable_web_page_preview=True)
 
 
 async def send_daily(force=False):
@@ -242,13 +275,31 @@ async def send_daily(force=False):
     rows, warning = select_rows(dates, entries, target)
     log.info("Dates on page: %s; target %s; rows for %s: %d; warning: %s",
              sorted(d.isoformat() for d in dates), target, TARGET_GROUP, len(rows), warning or "-")
-    messages = make_messages(target, rows, warning)
-    async with Bot(BOT_TOKEN) as bot:
-        for message in messages:
-            await bot.send_message(chat_id=CHAT_ID, text=message, parse_mode="HTML", disable_web_page_preview=True)
+    await send_messages(make_messages(target, rows, warning))
     if not force:  # a RUN_NOW test must not block the real 18:00 post
         mark_sent(day)
+        remember_rows(target.isoformat(), rows)
     log.info("Posted for %s (%d changes)", target, len(rows))
+
+
+async def send_update(force=False):
+    """Evening re-check: post ONLY changes that were not in earlier posts. Silent if nothing new."""
+    today = datetime.now(TZ).date()
+    target = today + timedelta(days=1)
+    dates, entries = await fetch_schedule(today)
+    if target not in dates:
+        log.info("Update check: no records for %s on the site yet", target)
+        return
+    rows, _ = select_rows(dates, entries, target)
+    known = known_rows(target.isoformat())
+    new_rows = [r for r in rows if row_key(r) not in known]
+    if not new_rows:
+        log.info("Update check: no new changes for %s", target)
+        return
+    await send_messages(make_messages(target, new_rows, is_update=True))
+    if not force:
+        remember_rows(target.isoformat(), new_rows)
+    log.info("Update posted for %s (%d new changes)", target, len(new_rows))
 
 
 class _Health(BaseHTTPRequestHandler):
@@ -280,8 +331,9 @@ async def main():
         await send_daily(force=True)
     scheduler = AsyncIOScheduler(timezone=TZ)
     scheduler.add_job(send_daily, "cron", hour=18, minute=0, id="daily-schedule", misfire_grace_time=3600)
+    scheduler.add_job(send_update, "cron", hour=20, minute=0, id="evening-update", misfire_grace_time=3600)
     scheduler.start()
-    log.info("Running; scheduled daily post at 18:00 %s", TZ.key)
+    log.info("Running; daily post at 18:00 and update check at 20:00 %s", TZ.key)
     await asyncio.Event().wait()
 
 
