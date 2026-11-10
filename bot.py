@@ -22,6 +22,7 @@ TZ = ZoneInfo(os.getenv("TIMEZONE", "Europe/Kyiv"))
 TARGET_GROUP = os.getenv("TARGET_GROUP", "21-KI")
 GROUP_LABEL = os.getenv("GROUP_LABEL", "21-КІ")  # how the group is shown in messages
 DB_PATH = os.getenv("DB_PATH", "sent.sqlite3")
+CANCELLED_TEXT = os.getenv("CANCELLED_TEXT", "—")  # shown instead of a struck-through / empty lesson
 
 logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO"), format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger("schedule-bot")
@@ -129,15 +130,19 @@ def parse_schedule(html_text, today):
                     else:
                         section, last_group = values[0], ""
                     continue
-                if len(values) < 3 or is_cancelled(row):
+                if len(values) == 2 and last_group and re.fullmatch(r"\d+", values[0]):
+                    values = ["", *values]  # the group cell is merged (rowspan) in the row above
+                if len(values) < 3:
                     continue
                 group, lesson, subject = values[0], values[1], " ".join(values[2:]).strip()
                 if group:
                     last_group = group
                 else:
                     group = last_group
-                if not group or not lesson or not subject:
+                if not group or not lesson:
                     continue
+                if is_cancelled(row) or not subject:  # struck-through or empty -> the lesson is cancelled
+                    subject = CANCELLED_TEXT
                 entries.append((current_date, section, group, lesson, subject))
     return dates, entries
 
