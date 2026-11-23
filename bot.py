@@ -181,9 +181,15 @@ def group_key(value):
     return re.sub(r"[^0-9a-z]", "", value.lower().translate(str.maketrans({"к": "k", "і": "i"})))
 
 
+def is_my_group(value):
+    """True for the whole group (21-КІ) and its subgroups (21-КІ(1), 21-КІ(2))."""
+    key, base = group_key(value), group_key(TARGET_GROUP)
+    return key == base or re.fullmatch(re.escape(base) + r"[12]", key) is not None
+
+
 def select_rows(dates, entries, target):
     """Pick the target group's rows for the target date. Returns (rows, warning)."""
-    mine = [e for e in entries if group_key(e[2]) == group_key(TARGET_GROUP)]
+    mine = [e for e in entries if is_my_group(e[2])]
     if not entries:
         return [], "На сторінці не знайдено жодного запису — перевір сайт вручну."
     if not dates:
@@ -272,6 +278,9 @@ async def send_messages(messages):
 async def send_daily(force=False):
     today = datetime.now(TZ).date()
     target = today + timedelta(days=1)  # the bot reports changes for TOMORROW
+    if target.weekday() == 6 and not force:  # tomorrow is Sunday -> no classes
+        log.info("Tomorrow (%s) is Sunday, skipping", target)
+        return
     day = today.isoformat()
     if not force and already_sent(day):
         log.info("Already posted for %s", day)
@@ -291,6 +300,9 @@ async def send_update(force=False):
     """Evening re-check: post ONLY changes that were not in earlier posts. Silent if nothing new."""
     today = datetime.now(TZ).date()
     target = today + timedelta(days=1)
+    if target.weekday() == 6 and not force:  # tomorrow is Sunday -> no classes
+        log.info("Update check: tomorrow is Sunday, skipping")
+        return
     dates, entries = await fetch_schedule(today)
     if target not in dates:
         log.info("Update check: no records for %s on the site yet", target)
