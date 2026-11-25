@@ -348,9 +348,9 @@ async def main():
         await send_daily(force=True)
     scheduler = AsyncIOScheduler(timezone=TZ)
     scheduler.add_job(send_daily, "cron", hour=17, minute=0, id="daily-schedule", misfire_grace_time=3600)
-    scheduler.add_job(send_update, "cron", hour=20, minute=0, id="evening-update", misfire_grace_time=3600)
+    scheduler.add_job(send_update, "cron", hour=19, minute=0, id="evening-update", misfire_grace_time=3600)
     scheduler.start()
-    log.info("Running; daily post at 17:00 and update check at 20:00 %s", TZ.key)
+    log.info("Running; daily post at 17:00 and update check at 19:00 %s", TZ.key)
     await asyncio.Event().wait()
 
 
