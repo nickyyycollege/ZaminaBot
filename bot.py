@@ -347,7 +347,7 @@ async def main():
     if os.getenv("RUN_NOW", "0") == "1":
         await send_daily(force=True)
     scheduler = AsyncIOScheduler(timezone=TZ)
-    scheduler.add_job(send_daily, "cron", hour=18, minute=0, id="daily-schedule", misfire_grace_time=3600)
+    scheduler.add_job(send_daily, "cron", hour=17, minute=0, id="daily-schedule", misfire_grace_time=3600)
     scheduler.add_job(send_update, "cron", hour=20, minute=0, id="evening-update", misfire_grace_time=3600)
     scheduler.start()
     log.info("Running; daily post at 17:00 and update check at 20:00 %s", TZ.key)
