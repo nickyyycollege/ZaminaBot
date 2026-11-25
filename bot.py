@@ -350,7 +350,7 @@ async def main():
     scheduler.add_job(send_daily, "cron", hour=18, minute=0, id="daily-schedule", misfire_grace_time=3600)
     scheduler.add_job(send_update, "cron", hour=20, minute=0, id="evening-update", misfire_grace_time=3600)
     scheduler.start()
-    log.info("Running; daily post at 18:00 and update check at 20:00 %s", TZ.key)
+    log.info("Running; daily post at 17:00 and update check at 20:00 %s", TZ.key)
     await asyncio.Event().wait()
 
 
